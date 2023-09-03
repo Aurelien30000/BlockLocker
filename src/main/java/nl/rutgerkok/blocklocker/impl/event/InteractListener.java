@@ -12,6 +12,7 @@ import org.bukkit.Tag;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.BlockState;
+import org.bukkit.block.Lectern;
 import org.bukkit.block.Sign;
 import org.bukkit.block.data.Levelled;
 import org.bukkit.block.data.Waterlogged;
@@ -27,6 +28,7 @@ import org.bukkit.event.block.SignChangeEvent;
 import org.bukkit.event.entity.EntityInteractEvent;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerTakeLecternBookEvent;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -309,12 +311,31 @@ public final class InteractListener extends EventListener {
         // Check if protection needs update
         plugin.getProtectionUpdater().update(protection.get(), false);
 
+        // Check if block is a lectern, should be simply open
+        if (block.getState() instanceof Lectern) {
+            return;
+        }
+
         // Check if player is allowed, open door
         if (checkAllowed(player, protection.get(), clickedSign)) {
             handleAllowed(event, protection.get(), clickedSign, usedOffHand);
         } else {
             handleDisallowed(event, protection.get(), clickedSign, usedOffHand);
         }
+    }
+
+    @EventHandler(ignoreCancelled = true)
+    public void onPlayerTakeLecternBookEvent(PlayerTakeLecternBookEvent event) {
+        Player player = event.getPlayer();
+        Lectern lectern = event.getLectern();
+
+        plugin.getProtectionFinder().findProtection(lectern.getBlock()).ifPresent(protection -> {
+            if (!checkAllowed(player, protection, false)) {
+                event.setCancelled(true);
+                plugin.getTranslator()
+                        .sendMessage(player, Translation.PROTECTION_NO_ACCESS, protection.getOwnerDisplayName());
+            }
+        });
     }
 
     private ItemStack removeOneItem(ItemStack item) {

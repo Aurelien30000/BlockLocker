@@ -72,6 +72,7 @@ protectableContainers:
 - trapped_chest
 - white_shulker_box
 - yellow_shulker_box
+- lectern
 
 # When set to true, one sign protects all connected nearby blocks of the same
 # type. When false, each container requires a separate sign.
