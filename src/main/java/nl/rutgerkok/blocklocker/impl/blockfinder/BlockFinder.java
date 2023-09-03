@@ -10,10 +10,12 @@ import org.bukkit.Tag;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockFace;
 import org.bukkit.block.data.BlockData;
-import org.bukkit.block.data.Directional;
 import org.bukkit.block.data.type.Chest;
 import org.bukkit.block.data.type.Chest.Type;
 import org.bukkit.block.data.type.Gate;
+import org.bukkit.block.data.type.HangingSign;
+import org.bukkit.block.data.type.Sign;
+import org.bukkit.block.data.type.WallHangingSign;
 import org.bukkit.block.data.type.WallSign;
 
 import com.google.common.base.Preconditions;
@@ -25,25 +27,24 @@ import nl.rutgerkok.blocklocker.SignParser;
 /**
  * Finds blocks that logically belong together, like the other half of a chest,
  * the attached signs, etc.
- *
  */
 public abstract class BlockFinder {
 
-    public static final BlockFace[] CARDINAL_FACES = { BlockFace.NORTH, BlockFace.EAST,
-                BlockFace.SOUTH, BlockFace.WEST };
-    private static final BlockFace[] SIGN_ATTACHMENT_FACES = { BlockFace.NORTH, BlockFace.EAST,
-                BlockFace.SOUTH, BlockFace.WEST, BlockFace.UP };
-    public static final BlockFace[] VERTICAL_FACES = { BlockFace.UP, BlockFace.DOWN };
-    public static final BlockFace[] NORTH_EAST_SOUTH_WEST_UP_DOWN = { BlockFace.NORTH, BlockFace.EAST,
-            BlockFace.SOUTH, BlockFace.WEST, BlockFace.UP, BlockFace.DOWN };
+    public static final BlockFace[] CARDINAL_FACES = {BlockFace.NORTH, BlockFace.EAST,
+            BlockFace.SOUTH, BlockFace.WEST};
+    private static final BlockFace[] SIGN_ATTACHMENT_FACES = {BlockFace.NORTH, BlockFace.EAST,
+            BlockFace.SOUTH, BlockFace.WEST, BlockFace.UP};
+    private static final BlockFace[] HANGING_SIGN_ATTACHMENT_FACES = {BlockFace.NORTH, BlockFace.EAST,
+            BlockFace.SOUTH, BlockFace.WEST, BlockFace.UP, BlockFace.DOWN};
+    public static final BlockFace[] VERTICAL_FACES = {BlockFace.UP, BlockFace.DOWN};
+    public static final BlockFace[] NORTH_EAST_SOUTH_WEST_UP_DOWN = {BlockFace.NORTH, BlockFace.EAST,
+            BlockFace.SOUTH, BlockFace.WEST, BlockFace.UP, BlockFace.DOWN};
 
     /**
      * Creates a new block finder.
      *
-     * @param parser
-     *            The parser of signs.
-     * @param connectContainers
-     *            Whether containers must be connected.
+     * @param parser            The parser of signs.
+     * @param connectContainers Whether containers must be connected.
      * @return The block finder.
      */
     public static BlockFinder create(SignParser parser, boolean connectContainers) {
@@ -63,8 +64,7 @@ public abstract class BlockFinder {
     /**
      * Finds all attached signs to a block, that are valid protection signs.
      *
-     * @param block
-     *            The block to check attached signs on.
+     * @param block The block to check attached signs on.
      * @return The signs.
      */
     public Collection<ProtectionSign> findAttachedSigns(Block block) {
@@ -83,14 +83,27 @@ public abstract class BlockFinder {
                 signs.add(parsedSign.get());
             }
         }
+        for (BlockFace face : HANGING_SIGN_ATTACHMENT_FACES) {
+            Block atPosition = block.getRelative(face);
+            Material material = atPosition.getType();
+            if (!Tag.WALL_HANGING_SIGNS.isTagged(material) && !Tag.CEILING_HANGING_SIGNS.isTagged(material)) {
+                continue;
+            }
+            if (!isAttachedSign(atPosition, block)) {
+                continue;
+            }
+            Optional<ProtectionSign> parsedSign = parser.parseSign(atPosition);
+            if (parsedSign.isPresent()) {
+                signs.add(parsedSign.get());
+            }
+        }
         return signs;
     }
 
     /**
      * Finds all attached signs to a block, that are valid protection signs.
      *
-     * @param blocks
-     *            The blocks to check attached signs on.
+     * @param blocks The blocks to check attached signs on.
      * @return The signs.
      */
     public Collection<ProtectionSign> findAttachedSigns(Collection<Block> blocks) {
@@ -109,8 +122,7 @@ public abstract class BlockFinder {
     /**
      * Searches for containers of the same type attached to this container.
      *
-     * @param block
-     *            The container.
+     * @param block The container.
      * @return List of attached containers, including the given container.
      */
     public abstract List<Block> findContainerNeighbors(Block block);
@@ -118,12 +130,11 @@ public abstract class BlockFinder {
     /**
      * Gets the block that supports the given block. If the returned block is
      * destroyed, the given block is destroyed too.
-     *
+     * <p>
      * For blocks that are self-supporting (most blocks in Minecraft), the
      * method returns the block itself.
      *
-     * @param block
-     *            The block.
+     * @param block The block.
      * @return The block the given block is attached on.
      */
     public Block findSupportingBlock(Block block) {
@@ -131,8 +142,14 @@ public abstract class BlockFinder {
         if (data instanceof Gate) {
             return block.getRelative(BlockFace.DOWN);
         }
-        if (data instanceof Directional) {
-            return block.getRelative(((Directional) data).getFacing().getOppositeFace());
+        if (data instanceof HangingSign) {
+            return block.getRelative(BlockFace.UP);
+        }
+        if (data instanceof WallSign wallSign) {
+            return block.getRelative(wallSign.getFacing().getOppositeFace());
+        }
+        if (data instanceof WallHangingSign wallHangingSign) {
+            return block.getRelative(turn90Degrees(wallHangingSign.getFacing().getOppositeFace()));
         }
         return block.getRelative(BlockFace.DOWN);
     }
@@ -164,25 +181,31 @@ public abstract class BlockFinder {
      * Checks if the sign at the given position is attached to the container.
      * Doens't check the text on the sign.
      *
-     * @param signBlock
-     *            The block that is a sign.
-     * @param attachedTo
-     *            The block the sign must be attached to. If this is not the
-     *            case, the method returns false.
+     * @param signBlock  The block that is a sign.
+     * @param attachedTo The block the sign must be attached to. If this is not the
+     *                   case, the method returns false.
      * @return True if the direction and header of the sign are valid, false
-     *         otherwise.
+     * otherwise.
      */
     private boolean isAttachedSign(Block signBlock, Block attachedTo) {
         BlockFace requiredFace = signBlock.getFace(attachedTo);
         BlockData materialData = signBlock.getBlockData();
-        BlockFace actualFace = BlockFace.DOWN;
-        if (materialData instanceof WallSign) {
-            actualFace = ((WallSign) materialData).getFacing().getOppositeFace();
+        if (materialData instanceof Sign) {
+            return BlockFace.DOWN == requiredFace;
         }
-        return (actualFace == requiredFace);
+        if (materialData instanceof HangingSign hangingSign) {
+            return hangingSign.isAttached() && BlockFace.UP == requiredFace;
+        }
+        if (materialData instanceof WallSign wallSign) {
+            return wallSign.getFacing().getOppositeFace() == requiredFace;
+        }
+        if (materialData instanceof WallHangingSign wallHangingSign) {
+            return turn90Degrees(wallHangingSign.getFacing().getOppositeFace()) == requiredFace;
+        }
+        return false;
     }
 
-    protected BlockFace turn90Degrees(BlockFace face) {
+    public static BlockFace turn90Degrees(BlockFace face) {
         switch (face) {
             case NORTH:
                 return BlockFace.EAST;

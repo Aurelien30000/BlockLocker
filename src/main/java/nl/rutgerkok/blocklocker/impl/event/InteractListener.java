@@ -4,6 +4,7 @@ import java.util.Optional;
 import java.util.Set;
 
 import nl.rutgerkok.blocklocker.*;
+import nl.rutgerkok.blocklocker.impl.blockfinder.BlockFinder;
 import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
@@ -16,6 +17,7 @@ import org.bukkit.block.Lectern;
 import org.bukkit.block.Sign;
 import org.bukkit.block.data.Levelled;
 import org.bukkit.block.data.Waterlogged;
+import org.bukkit.block.data.type.WallHangingSign;
 import org.bukkit.block.data.type.WallSign;
 import org.bukkit.block.sign.Side;
 import org.bukkit.block.sign.SignSide;
@@ -47,15 +49,17 @@ import nl.rutgerkok.blocklocker.protection.Protection.SoundCondition;
 
 public final class InteractListener extends EventListener {
 
-    private static final Set<BlockFace> AUTOPLACE_BLOCK_FACES = ImmutableSet.of(BlockFace.NORTH, BlockFace.EAST,
+    private static final Set<BlockFace> AUTOPLACE_SIGN_FACES = ImmutableSet.of(BlockFace.NORTH, BlockFace.EAST,
             BlockFace.SOUTH, BlockFace.WEST, BlockFace.UP);
+    private static final Set<BlockFace> AUTOPLACE_HANGING_SIGN_FACES = ImmutableSet.of(BlockFace.NORTH, BlockFace.EAST,
+            BlockFace.SOUTH, BlockFace.WEST, BlockFace.DOWN);
 
     public InteractListener(BlockLockerPluginImpl plugin) {
         super(plugin);
     }
 
     private boolean allowedByBlockPlaceEvent(Block placedBlock, BlockState replacedBlockState, Block placedAgainst,
-            EquipmentSlot placedUsingHand, Player player) {
+                                             EquipmentSlot placedUsingHand, Player player) {
         Material originalMaterial = placedBlock.getType();
 
         ItemStack itemInHand = placedUsingHand == EquipmentSlot.OFF_HAND ? player.getInventory().getItemInOffHand()
@@ -76,8 +80,7 @@ public final class InteractListener extends EventListener {
     /**
      * Gets whether players are allowed to build in the given game mode.
      *
-     * @param gameMode
-     *            The game mode, may be null.
+     * @param gameMode The game mode, may be null.
      * @return True for survival and creative, false for the other modes.
      */
     private boolean canBuildInMode(GameMode gameMode) {
@@ -141,22 +144,46 @@ public final class InteractListener extends EventListener {
         return materialData;
     }
 
+    private org.bukkit.block.data.type.HangingSign getRotatedHangingSignPost(Player player, Material signMaterial) {
+        float rotation = player.getLocation().getYaw();
+        if (rotation < 0) {
+            rotation += 360.0f;
+        }
+        org.bukkit.block.data.type.HangingSign materialData = (org.bukkit.block.data.type.HangingSign) signMaterial
+                .createBlockData();
+        materialData.setAttached(true);
+        materialData.setRotation(rotationToBlockFace(rotation));
+        return materialData;
+    }
+
     private Waterlogged getSignBlockData(BlockFace blockFace, Player player, Material signMaterial) {
         if (blockFace == BlockFace.UP) {
             // Place standing sign in direction of player
             return getRotatedSignPost(player, signMaterial);
-        } else {
+        }
+        if (blockFace == BlockFace.DOWN) {
+            // Place ceiling sign in direction of player
+            return getRotatedHangingSignPost(player, signMaterial);
+        }
+        if (Tag.SIGNS.isTagged(signMaterial)) {
             // Place attached sign
             WallSign wallSignData = (WallSign) toWallSign(signMaterial).createBlockData();
             wallSignData.setFacing(blockFace);
             return wallSignData;
         }
+        if (Tag.ITEMS_HANGING_SIGNS.isTagged(signMaterial)) {
+            // Place attached sign
+            WallHangingSign wallHangingSignData = (WallHangingSign) toWallHandingSign(signMaterial).createBlockData();
+            wallHangingSignData.setFacing(BlockFinder.turn90Degrees(blockFace.getOppositeFace()));
+            return wallHangingSignData;
+        }
+        return null;
     }
 
     private Optional<Material> getSignInHand(Player player, EquipmentSlot hand) {
         PlayerInventory inventory = player.getInventory();
         ItemStack item = hand == EquipmentSlot.OFF_HAND ? inventory.getItemInOffHand() : inventory.getItemInMainHand();
-        if (isOfType(item, Tag.SIGNS)) {
+        if (isOfType(item, Tag.SIGNS) || isOfType(item, Tag.ITEMS_HANGING_SIGNS)) {
             return Optional.of(item.getType());
         }
         return Optional.empty();
@@ -204,7 +231,7 @@ public final class InteractListener extends EventListener {
     }
 
     private void handleDisallowed(PlayerInteractEvent event, Protection protection, boolean clickedSign,
-            boolean usedOffHand) {
+                                  boolean usedOffHand) {
         event.setCancelled(true);
 
         if (usedOffHand) {
@@ -253,7 +280,7 @@ public final class InteractListener extends EventListener {
             return;
         }
         if (plugin.getChestSettings().allowDestroyBy(AttackType.VILLAGER)) {
-           return;
+            return;
         }
         if (isProtected(event.getBlock())) {
             event.setCancelled(true);
@@ -295,7 +322,8 @@ public final class InteractListener extends EventListener {
             return;
         }
         Material material = block.getType();
-        boolean clickedSign = Tag.STANDING_SIGNS.isTagged(material) || Tag.WALL_SIGNS.isTagged(material);
+        boolean clickedSign = Tag.STANDING_SIGNS.isTagged(material) || Tag.WALL_SIGNS.isTagged(material)
+                || Tag.WALL_HANGING_SIGNS.isTagged(material) || Tag.CEILING_HANGING_SIGNS.isTagged(material);
         // When using the offhand check, access checks must still be performed,
         // but no messages must be sent
         boolean usedOffHand = event.getHand() == EquipmentSlot.OFF_HAND;
@@ -355,9 +383,11 @@ public final class InteractListener extends EventListener {
         // Keep order (main, then off hand) the same as in getSignInHand - otherwise you
         // might remove the wrong sign
         PlayerInventory inventory = player.getInventory();
-        if (isOfType(inventory.getItemInMainHand(), Tag.SIGNS)) {
+        if (isOfType(inventory.getItemInMainHand(), Tag.SIGNS)
+                || isOfType(inventory.getItemInMainHand(), Tag.ITEMS_HANGING_SIGNS)) {
             inventory.setItemInMainHand(removeOneItem(inventory.getItemInMainHand()));
-        } else if (isOfType(inventory.getItemInOffHand(), Tag.SIGNS)) {
+        } else if (isOfType(inventory.getItemInOffHand(), Tag.SIGNS)
+                || isOfType(inventory.getItemInOffHand(), Tag.ITEMS_HANGING_SIGNS)) {
             inventory.setItemInOffHand(removeOneItem(inventory.getItemInOffHand()));
         }
     }
@@ -422,8 +452,12 @@ public final class InteractListener extends EventListener {
         return Material.valueOf(signMaterial.name().replace("_SIGN", "_WALL_SIGN"));
     }
 
+    private Material toWallHandingSign(Material signMaterial) {
+        return Material.valueOf(signMaterial.name().replace("_HANGING_SIGN", "_WALL_HANGING_SIGN"));
+    }
+
     private boolean tryPlaceSign(Player player, Block block, BlockFace clickedSide, EquipmentSlot hand,
-            SignType signType) {
+                                 SignType signType) {
         if (player.isSneaking() || !canBuildInMode(player.getGameMode())) {
             return false;
         }
@@ -439,7 +473,8 @@ public final class InteractListener extends EventListener {
         if (!player.hasPermission(Permissions.CAN_PROTECT)) {
             return false;
         }
-        if (!AUTOPLACE_BLOCK_FACES.contains(clickedSide)) {
+        if ((Tag.SIGNS.isTagged(signMaterial) && !AUTOPLACE_SIGN_FACES.contains(clickedSide))
+                || (Tag.ITEMS_HANGING_SIGNS.isTagged(signMaterial) && !AUTOPLACE_HANGING_SIGN_FACES.contains(clickedSide))) {
             return false;
         }
         try {
@@ -479,7 +514,8 @@ public final class InteractListener extends EventListener {
         Sign sign = (Sign) signBlock.getState();
 
         // Decide what the text on the sign is going to be
-        Profile profile = signType.isMainSign() ? plugin.getProfileFactory().fromPlayer(player)
+        Profile profile = signType.isMainSign()
+                ? plugin.getProfileFactory().fromPlayer(player)
                 : plugin.getProfileFactory().fromRedstone();
         ProtectionSign protectionSign = plugin.getProtectionFinder().newProtectionSign(sign, signType, profile);
         String[] newLines = plugin.getSignParser().getDisplayLines(protectionSign);

@@ -42,7 +42,8 @@ public class BlockDestroyListener extends EventListener {
 
     private Optional<ProtectionSign> asMainSign(Block block) {
         Material material = block.getType();
-        if (!Tag.WALL_SIGNS.isTagged(material) && !Tag.STANDING_SIGNS.isTagged(material)) {
+        if (!Tag.WALL_SIGNS.isTagged(material) && !Tag.STANDING_SIGNS.isTagged(material)
+                && !Tag.WALL_HANGING_SIGNS.isTagged(material) && !Tag.CEILING_HANGING_SIGNS.isTagged(material)) {
             return Optional.empty();
         }
 

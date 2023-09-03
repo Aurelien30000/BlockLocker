@@ -115,7 +115,8 @@ class ProtectionFinderImpl implements ProtectionFinder {
 
         // Check for sign
         if (searchMode.searchForSigns() &&
-                (Tag.WALL_SIGNS.isTagged(blockMaterial) || Tag.STANDING_SIGNS.isTagged(blockMaterial))) {
+                (Tag.WALL_SIGNS.isTagged(blockMaterial) || Tag.STANDING_SIGNS.isTagged(blockMaterial))
+                || Tag.WALL_HANGING_SIGNS.isTagged(blockMaterial) || Tag.CEILING_HANGING_SIGNS.isTagged(blockMaterial)) {
             return findProtectionForExistingSign(block);
         }
 
